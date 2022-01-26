@@ -1,14 +1,13 @@
 """
-requiredPower_02.py
+requiredPower_03.py
 Looks in aces.vromfs.bin_u for a plane's flight model and uses the information to calculate the required power at different speeds
 
 Changes from last version
-Reads game files to get the mass of the aircraft
-Takes the name of the plane model file as input rather than the flight model file
+Is able to deal with different data formats (list of dictionaries vs dictionary) used for plane model and flight model files than expected
 
 Issues with this version
-Assumes plane model file and weapon file are in list of dictionaries format and flight model file is in dictionary format, this is not always the case (haven't found counterexamples for the waepon files, but there are counterexamples for plane models and flight models)
-  Add a data type converter into the program to get data in the expected format
+Some flight model files have a very different format (ex. P-40E)
+  Detect the format by looking for "Areas" in keys, and add code to get values from the different format
 Assumes radiator is closed always
   Ask user how open the radiator should be
 Assumes the plane is fully fueled
@@ -38,13 +37,42 @@ cLvsAoACoefficient = 0
 cDMin = 0
 oswaldEfficiency = 0
 
+#Converts a list of dictionaries to a single dictionary (Useful for some of the files being imported)
+def listToDict(listToConvert):
+    dictResult = dict()
+    #If already a dictionary, no need to convert
+    if type(listToConvert) is dict:
+        return listToConvert
+    #Go through each individual dictionary
+    for element in listToConvert:
+        if type(element) is dict:
+            for key in element.keys():
+                #If the key has not already been used, add the element
+                if key not in dictResult.keys():
+                    dictResult[key] = element[key]
+    #Return the dictionary
+    return dictResult
+
+#Converts a dictionary to a list of dictionaries (Useful for some of the files being imported to put them in a format consistent with other files of the same type)
+def dictToList(dictToConvert):
+    listResult = []
+    #If already a list, no need to convert
+    if type(dictToConvert) is list:
+        return dictToConvert
+    #Go through the elements in the dictionary and add them to the lsit
+    for key in dictToConvert.keys():
+        listResult.append(dict())
+        listResult[len(listResult) - 1][key] = dictToConvert[key]
+    #Return the list
+    return listResult
+
 #Searches through a list of dictionaries for the first one with the given key and returns the value associated with that key
 def searchList(key, listToSearch):
     for element in listToSearch:
         if type(element) is dict and key in element.keys():
             return element[key]
-    #If nothing is found, return "Null"
-    return "Null"
+    #If nothing is found, return null
+    return None
 
 #Given a gun file, find all the ammo belts
 def findBelts(weapon):
@@ -65,12 +93,14 @@ def ammoMass(commonWeapons):
     guns = dict()
     for element in commonWeapons:
         if type(element) is dict and "Weapon" in element.keys():
+            #Sometimes the weapon is in list of dictionaries form and must be fixed (ex. F4F-4)
+            weapon = listToDict(element["Weapon"])
             #If the weapon type is already noted, add to its ammo count
-            if element["Weapon"]["blk"] in guns.keys():
-                guns[element["Weapon"]["blk"]] += element["Weapon"]["bullets"]
+            if weapon["blk"] in guns.keys():
+                guns[weapon["blk"]] += weapon["bullets"]
             #Otherwise add the weapon type and it's ammo count
             else:
-                guns[element["Weapon"]["blk"]] = element["Weapon"]["bullets"]
+                guns[weapon["blk"]] = weapon["bullets"]
     #Find the ammo mass for each type of gun
     mass = 0
     for gunFile in guns.keys():
@@ -132,14 +162,19 @@ except Exception as e:
     print("Could not access plane model file " + str(e))
     exit()
 #Get the flight model file
+planeModel = dictToList(planeModel)
 flightModelFile = searchList("fmFile", planeModel)
+#If there was no "fmFile" element, the flightmodel file should have the same name as the plane model file
+if flightModelFile == None:
+    flightModelFile = "fm/" + plane + ".blk"
 flightModel = dict()
 try:
     flightModel = json.loads(open(ROM_FILE_PATH + FM_LOCATION + flightModelFile + "x", "r").read())
 except Exception as e:
     print("Could not access flight model file " + str(e))
     exit()
-
+flightModel = listToDict(flightModel)
+    
 #Get the mass of the plane
 mass = 0
 #Get mass from flight model
@@ -167,8 +202,10 @@ cDMin = flightModel["Aerodynamics"]["NoFlaps"]["CdMin"] #Wing CD
 cDMin += flightModel["Aerodynamics"]["Fuselage"]["CdMin"] #Fuselage CD
 cDMin += flightModel["Aerodynamics"]["Stab"]["CdMin"] * flightModel["Areas"]["Stabilizer"] / wingArea #Horizontal stabilizer CD normalized to wing area
 cDMin += flightModel["Aerodynamics"]["Fin"]["CdMin"] * flightModel["Areas"]["Keel"] / wingArea #Vertical stabilizer CD normalized to wing area
-cDMin += flightModel["Aerodynamics"]["GearCentralCd"] #Central gear leg CD (Should this be included?)
-cDMin += flightModel["Aerodynamics"]["OilRadiatorCd"] #Oil radiator CD
+if "GearCentralCd" in flightModel["Aerodynamics"].keys():
+    cDMin += flightModel["Aerodynamics"]["GearCentralCd"] #Central gear leg CD (Should this be included?) (Sometimes does not exist in fm files)
+if "OilRadiatorCd" in flightModel["Aerodynamics"].keys():
+    cDMin += flightModel["Aerodynamics"]["OilRadiatorCd"] #Oil radiator CD (Sometimes does not exist in fm files)
 #cDMin += flightModel["Aerodynamics"]["RadiatorCd"] #Radiator CD (Radiator may be open or closed)
 #Oswald Efficiency
 oswaldEfficiency = flightModel["Aerodynamics"]["OswaldsEfficiencyNumber"]
