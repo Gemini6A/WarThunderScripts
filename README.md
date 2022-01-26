@@ -2,7 +2,7 @@
 Scripts to get or use data from the game, War Thunder.
 
 ## telemetry.py
-Gets some select telemetry data and prints it to the console
+Gets some select telemetry data and prints it to the console\
 Uses the [http://localhost:8111](http://localhost:8111) site set up by the game
 
 ## requiredPower.py
