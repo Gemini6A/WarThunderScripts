@@ -1,13 +1,14 @@
 """
-requiredPower_03.py
+requiredPower_04.py
 Looks in aces.vromfs.bin_u for a plane's flight model and uses the information to calculate the required power at different speeds
 
 Changes from last version
-Is able to deal with different data formats (list of dictionaries vs dictionary) used for plane model and flight model files than expected
+Can use the different format for flight models (ex. P-40E)
+Is able to deal with different data formats (list of dictionaries vs dictionary) used for weapon files as well now (cannonm4 was different with only one type of round in the default belt)
+Now assumes oil radiator is closed as well
+
 
 Issues with this version
-Some flight model files have a very different format (ex. P-40E)
-  Detect the format by looking for "Areas" in keys, and add code to get values from the different format
 Assumes radiator is closed always
   Ask user how open the radiator should be
 Assumes the plane is fully fueled
@@ -27,7 +28,10 @@ GRAVITATIONAL_ACCELERATION = 9.81
 STANDARD_AIR_DENSITY = 1.225
 DEGREES_TO_RADIANS = math.pi / 180
 WATTS_PER_HORSEPOWER = 745.7
-WING_PIECES = ["WingLeftIn", "WingLeftMid", "WingLeftOut", "WingRightIn", "WingRightMid", "WingRightOut"]
+WING_PIECES_1 = ["WingLeftIn", "WingLeftMid", "WingLeftOut", "WingRightIn", "WingRightMid", "WingRightOut"]
+WING_PIECES_2 = ["LeftIn", "LeftMid", "LeftOut", "RightIn", "RightMid", "RightOut"]
+
+fmFormat = 1 #There are two formats for where some coefficients are stored
 
 mass = 0
 wingArea = 0
@@ -76,10 +80,11 @@ def searchList(key, listToSearch):
 
 #Given a gun file, find all the ammo belts
 def findBelts(weapon):
+    weaponList = dictToList(weapon)
     #Store the names of all belts
     belts = ["default"]
     #Search for ammo belts
-    for element in weapon:
+    for element in weaponList:
         if type(element) is dict:
             for key in element.keys():
                 if type(element[key]) is list and len(element[key]) > 0 and type(element[key][0]) is dict and "bullet" in element[key][0].keys():
@@ -127,6 +132,7 @@ def ammoMass(commonWeapons):
             belt = weapon
         else:
             belt = searchList(belts[index], weapon)
+        belt = dictToList(belt)
         #Get the mass of each bullet in the belt
         ammoMass = []
         for element in belt:
@@ -174,7 +180,11 @@ except Exception as e:
     print("Could not access flight model file " + str(e))
     exit()
 flightModel = listToDict(flightModel)
-    
+
+#Detect the flight model format
+if "Areas" not in flightModel.keys():
+    fmFormat = 2
+
 #Get the mass of the plane
 mass = 0
 #Get mass from flight model
@@ -188,27 +198,55 @@ mass += ammoMass(searchList("commonWeapons", planeModel))
 
 #Get the necessary flight model characteristics
 #Wing area
-for piece in WING_PIECES:
-    wingArea += flightModel["Areas"][piece]
-print("Wing Area: {}".format(wingArea)) #temp
+if fmFormat == 1:
+    for piece in WING_PIECES_1:
+        wingArea += flightModel["Areas"][piece]
+else:
+    for piece in WING_PIECES_2:
+        wingArea += flightModel["Aerodynamics"]["WingPlane"]["Areas"][piece]
+
 #Wing span
-wingSpan = flightModel["Wingspan"]
+if fmFormat == 1:
+    wingSpan = flightModel["Wingspan"]
+else:
+    wingSpan = flightModel["Aerodynamics"]["WingPlane"]["Span"]
+    
 #CL0
-cL0 = flightModel["Aerodynamics"]["NoFlaps"]["Cl0"]
+if fmFormat == 1:
+    cL0 = flightModel["Aerodynamics"]["NoFlaps"]["Cl0"]
+else:
+    cL0 = flightModel["Aerodynamics"]["WingPlane"]["Polar"]["NoFlaps"]["Cl0"]
+    
 #Change in CL over change in AoA (linear region)
-cLvsAoACoefficient = flightModel["Aerodynamics"]["lineClCoeff"]
+if fmFormat == 1:
+    cLvsAoACoefficient = flightModel["Aerodynamics"]["lineClCoeff"]
+else:
+    cLvsAoACoefficient = flightModel["Aerodynamics"]["WingPlane"]["Polar"]["lineClCoeff"]
+    
 #CDMin
-cDMin = flightModel["Aerodynamics"]["NoFlaps"]["CdMin"] #Wing CD
-cDMin += flightModel["Aerodynamics"]["Fuselage"]["CdMin"] #Fuselage CD
-cDMin += flightModel["Aerodynamics"]["Stab"]["CdMin"] * flightModel["Areas"]["Stabilizer"] / wingArea #Horizontal stabilizer CD normalized to wing area
-cDMin += flightModel["Aerodynamics"]["Fin"]["CdMin"] * flightModel["Areas"]["Keel"] / wingArea #Vertical stabilizer CD normalized to wing area
-if "GearCentralCd" in flightModel["Aerodynamics"].keys():
-    cDMin += flightModel["Aerodynamics"]["GearCentralCd"] #Central gear leg CD (Should this be included?) (Sometimes does not exist in fm files)
-if "OilRadiatorCd" in flightModel["Aerodynamics"].keys():
-    cDMin += flightModel["Aerodynamics"]["OilRadiatorCd"] #Oil radiator CD (Sometimes does not exist in fm files)
-#cDMin += flightModel["Aerodynamics"]["RadiatorCd"] #Radiator CD (Radiator may be open or closed)
+if fmFormat == 1:
+    cDMin = flightModel["Aerodynamics"]["NoFlaps"]["CdMin"] #Wing CD
+    cDMin += flightModel["Aerodynamics"]["Fuselage"]["CdMin"] #Fuselage CD
+    cDMin += flightModel["Aerodynamics"]["Stab"]["CdMin"] * flightModel["Areas"]["Stabilizer"] / wingArea #Horizontal stabilizer CD normalized to wing area
+    cDMin += flightModel["Aerodynamics"]["Fin"]["CdMin"] * flightModel["Areas"]["Keel"] / wingArea #Vertical stabilizer CD normalized to wing area
+    if "GearCentralCd" in flightModel["Aerodynamics"].keys():
+        cDMin += flightModel["Aerodynamics"]["GearCentralCd"] #Central gear leg CD (Should this be included?) (Sometimes does not exist in fm files)
+    #if "OilRadiatorCd" in flightModel["Aerodynamics"].keys():
+        #cDMin += flightModel["Aerodynamics"]["OilRadiatorCd"] #Oil radiator CD (Sometimes does not exist in fm files) (May be closed)
+    #cDMin += flightModel["Aerodynamics"]["RadiatorCd"] #Radiator CD (Radiator may be open or closed)
+else:
+    cDMin = flightModel["Aerodynamics"]["WingPlane"]["Polar"]["NoFlaps"]["CdMin"] #Wing CD
+    cDMin += flightModel["Aerodynamics"]["FuselagePlane"]["Polar"]["CdMin"] * flightModel["Aerodynamics"]["FuselagePlane"]["Areas"]["Main"] / wingArea #Fuselage CD normalized to wing area
+    cDMin += flightModel["Aerodynamics"]["HorStabPlane"]["Polar"]["CdMin"] * flightModel["Aerodynamics"]["HorStabPlane"]["Areas"]["Main"] / wingArea #Horizontal stabilizer CD normalized to wing area
+    cDMin += flightModel["Aerodynamics"]["VerStabPlane"]["Polar"]["CdMin"] * flightModel["Aerodynamics"]["VerStabPlane"]["Areas"]["Main"] / wingArea #Vertical stabilizer CD normalized to wing area
+    if "GearCentralCd" in flightModel["Aerodynamics"].keys():
+        cDMin += flightModel["Aerodynamics"]["GearCentralCd"] #Central gear leg CD (Should this be included?) (Sometimes does not exist in fm files)
+        
 #Oswald Efficiency
-oswaldEfficiency = flightModel["Aerodynamics"]["OswaldsEfficiencyNumber"]
+if fmFormat == 1:
+    oswaldEfficiency = flightModel["Aerodynamics"]["OswaldsEfficiencyNumber"]
+else:
+    oswaldEfficiency = flightModel["Aerodynamics"]["WingPlane"]["Polar"]["OswaldsEfficiencyNumber"]
 
 print("m, area, span, CL0, CLvsAoA, CDMin, e")
 print("{}, {}, {}, {}, {}, {}, {}".format(mass, wingArea, wingSpan, cL0, cLvsAoACoefficient, cDMin, oswaldEfficiency))
