@@ -1,18 +1,15 @@
 """
-requiredPower_04.py
+requiredPower.py
 Looks in aces.vromfs.bin_u for a plane's flight model and uses the information to calculate the required power at different speeds
 
 Changes from last version
-Can use the different format for flight models (ex. P-40E)
-Is able to deal with different data formats (list of dictionaries vs dictionary) used for weapon files as well now (cannonm4 was different with only one type of round in the default belt)
-Now assumes oil radiator is closed as well
+Calculates fuel load options and prompts the user for which should be used
+Is able to deal with list rather than dict under "bullet" in weapons (ex. cannonmgffm)
 
 
 Issues with this version
 Assumes radiator is closed always
   Ask user how open the radiator should be
-Assumes the plane is fully fueled
-  Ask the user how much fuel should be in the plane (may convert to minutes of fuel)
 The model will be inaccurate outside of region of linaer corelation between CL and AoA
 """
 
@@ -30,6 +27,8 @@ DEGREES_TO_RADIANS = math.pi / 180
 WATTS_PER_HORSEPOWER = 745.7
 WING_PIECES_1 = ["WingLeftIn", "WingLeftMid", "WingLeftOut", "WingRightIn", "WingRightMid", "WingRightOut"]
 WING_PIECES_2 = ["LeftIn", "LeftMid", "LeftOut", "RightIn", "RightMid", "RightOut"]
+MIN_FUEL_PROPORTION = 0.3
+FUEL_LOADS = [20, 30, 45, 60]
 
 fmFormat = 1 #There are two formats for where some coefficients are stored
 
@@ -137,7 +136,7 @@ def ammoMass(commonWeapons):
         ammoMass = []
         for element in belt:
             if type(element) is dict and "bullet" in element.keys():
-                ammoMass.append(element["bullet"]["mass"])
+                ammoMass.append(listToDict(element["bullet"])["mass"])
         #If the number of rounds in a gun is not a multiple of the number of rounds in a belt, the average mass of a round multiplied by the number of rounds will not be the mass of all ammo in the plane (but will only be off by a very small amount), may want to change code to account for this in the future
         #Calculate the average mass of a round in the belt
         averageMass = 0
@@ -147,6 +146,33 @@ def ammoMass(commonWeapons):
         #Add to the total ammo mass
         mass += averageMass * guns[gunFile]
     #Return
+    return mass
+
+#Find all fuel loads and return the mass of the user selected load
+def fuelMass(flightModel):
+    mass = 0
+    maxFuel = flightModel["Mass"]["MaxFuelMass0"]
+    #Find how quickly the engine consumes fuel (kg/min)
+    if "EngineType0" in flightModel.keys():
+        consumptionRate = flightModel["EngineType0"]["Main"]["FuelConsumptionOnFullThr"] * flightModel["EngineType0"]["Main"]["Power"] / 60
+    else:
+        consumptionRate = flightModel["Engine0"]["Main"]["FuelConsumptionOnFullThr"] * flightModel["Engine0"]["Main"]["Power"] / 60
+    #Create a list of the fuel loads by the time the fuel will last (approx)
+    fuelLoadTimes = [maxFuel * MIN_FUEL_PROPORTION / consumptionRate]
+    for load in FUEL_LOADS:
+        if load > fuelLoadTimes[0] and load < maxFuel / consumptionRate:
+            fuelLoadTimes.append(load)
+    fuelLoadTimes.append(maxFuel / consumptionRate)
+    #Ask the user for the fuel load
+    print("What fuel load is being used?")
+    for i in range(len(fuelLoadTimes)):
+        print("{}: {}".format(i, int(fuelLoadTimes[i])))
+    index = -1
+    while index < 0 or index >= len(fuelLoadTimes):
+        index = int(input("Give the number next to the desired fuel load: "))
+    #Convert time to mass
+    mass = fuelLoadTimes[index] * consumptionRate
+    print("Fuel mass {}".format(mass)) #temp
     return mass
 
 plane = input("Give the plane name as it appears in the flight model file: ")
@@ -189,7 +215,7 @@ if "Areas" not in flightModel.keys():
 mass = 0
 #Get mass from flight model
 mass += flightModel["Mass"]["EmptyMass"]
-mass += flightModel["Mass"]["MaxFuelMass0"]
+mass += fuelMass(flightModel)
 mass += flightModel["Mass"]["MaxNitro"]
 mass += flightModel["Mass"]["OilMass"]
 mass += PILOT_MASS
